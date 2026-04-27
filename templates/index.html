@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iExec TDX Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ═══ Header ═══ -->
+<div class="header">
+    <div class="header-left">
+        <svg class="logo" viewBox="0 0 36 36" fill="none">
+            <rect width="36" height="36" rx="8" fill="#FCD15A"/>
+            <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle"
+                  font-family="Inter,sans-serif" font-weight="700" font-size="14" fill="#1D1D2C">TDX</text>
+        </svg>
+        <h1>iExec <span>TDX Dashboard</span></h1>
+    </div>
+    <div class="header-controls">
+        <div class="data-source" id="data-source" title="Data source">
+            <span class="source-dot"></span>
+            <span class="source-label">–</span>
+        </div>
+        <button class="btn-export" onclick="exportCSV()" title="Export CSV">⬇ CSV</button>
+        <button class="btn-refresh" onclick="forceRefresh()">↻ Refresh</button>
+    </div>
+</div>
+
+<!-- ═══ Network Tabs ═══ -->
+<div class="network-tabs">
+    <div class="network-tab active" data-network="mainnet">Arbitrum Mainnet</div>
+    <div class="network-tab" data-network="sepolia">Arbitrum Sepolia</div>
+</div>
+
+<!-- ═══ Date Filters ═══ -->
+<div class="date-filters">
+    <div class="quick-filters">
+        <button class="filter-btn" data-range="1d">Today</button>
+        <button class="filter-btn" data-range="7d">7 Days</button>
+        <button class="filter-btn active" data-range="1m">1 Month</button>
+        <button class="filter-btn" data-range="3m">3 Months</button>
+        <button class="filter-btn" data-range="6m">6 Months</button>
+        <button class="filter-btn" data-range="custom" id="btn-custom">Custom</button>
+    </div>
+    <div class="custom-range" id="custom-range">
+        <label>From <input type="date" id="date-from"></label>
+        <label>To <input type="date" id="date-to"></label>
+        <button class="btn-apply" onclick="applyCustomRange()">Apply</button>
+    </div>
+</div>
+
+<!-- ═══ Dashboard ═══ -->
+<div class="dashboard">
+
+    <div class="period-info" id="period-info"></div>
+    <div class="spinner" id="spinner"></div>
+
+    <!-- KPIs -->
+    <div class="kpi-grid" id="kpi-grid">
+        <div class="kpi-card"><div class="kpi-value yellow" id="kpi-total">–</div><div class="kpi-label">Total Tasks</div></div>
+        <div class="kpi-card"><div class="kpi-value success" id="kpi-completed">–</div><div class="kpi-label">Completed</div></div>
+        <div class="kpi-card"><div class="kpi-value fail" id="kpi-failed">–</div><div class="kpi-label">Failed / Claimed</div></div>
+        <div class="kpi-card"><div class="kpi-value yellow" id="kpi-rate">–</div><div class="kpi-label">Success Rate</div></div>
+        <div class="kpi-card"><div class="kpi-value" id="kpi-apps">–</div><div class="kpi-label">Apps</div></div>
+        <div class="kpi-card"><div class="kpi-value" id="kpi-requesters">–</div><div class="kpi-label">Requesters</div></div>
+        <div class="kpi-card"><div class="kpi-value" id="kpi-datasets">–</div><div class="kpi-label">Datasets</div></div>
+    </div>
+
+    <!-- Charts -->
+    <div class="charts-grid">
+        <div class="chart-panel full">
+            <h3>Tasks per Day</h3>
+            <div class="chart-container tall"><canvas id="chart-daily"></canvas></div>
+        </div>
+        <div class="chart-panel">
+            <h3>Apps Breakdown</h3>
+            <div class="chart-container"><canvas id="chart-apps"></canvas></div>
+        </div>
+        <div class="chart-panel">
+            <h3>Status Distribution</h3>
+            <div class="chart-container"><canvas id="chart-status"></canvas></div>
+        </div>
+    </div>
+
+    <!-- Requesters Table -->
+    <div class="chart-panel full" style="margin-bottom:28px">
+        <h3>Top Requesters</h3>
+        <div class="table-wrapper">
+            <table id="requesters-table">
+                <thead>
+                    <tr>
+                        <th>Requester</th>
+                        <th>Total</th>
+                        <th>Completed</th>
+                        <th>Failed</th>
+                    </tr>
+                </thead>
+                <tbody id="requesters-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Apps Table -->
+    <div class="chart-panel full">
+        <h3>Apps Detail</h3>
+        <div class="table-wrapper">
+            <table id="apps-table">
+                <thead>
+                    <tr>
+                        <th>App Name</th>
+                        <th>Total</th>
+                        <th>Completed</th>
+                        <th>Failed</th>
+                        <th>Success Rate</th>
+                    </tr>
+                </thead>
+                <tbody id="apps-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────
+let currentNetwork = 'mainnet';
+let dateFrom = null;
+let dateTo = null;
+const charts = {};
+
+const COLORS = {
+    COMPLETED: '#4ADE80',
+    FAILLED:   '#F87171',
+    OTHER:     '#A78BFA',
+};
+
+// ── Date helpers ───────────────────────────────────────────
+function fmtDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+function setDateRange(range) {
+    const now = new Date();
+    let from;
+    switch (range) {
+        case '1d':
+            from = new Date(now); break;
+        case '7d':
+            from = new Date(now); from.setDate(from.getDate() - 7); break;
+        case '1m':
+            from = new Date(now); from.setMonth(from.getMonth() - 1); break;
+        case '3m':
+            from = new Date(now); from.setMonth(from.getMonth() - 3); break;
+        case '6m':
+            from = new Date(now); from.setMonth(from.getMonth() - 6); break;
+        case 'custom':
+            document.getElementById('custom-range').classList.toggle('visible');
+            return;
+        default:
+            from = new Date(now); from.setDate(from.getDate() - 35);
+    }
+    dateFrom = fmtDate(from);
+    dateTo = fmtDate(now);
+    document.getElementById('custom-range').classList.remove('visible');
+    loadAll();
+}
+
+function applyCustomRange() {
+    const f = document.getElementById('date-from').value;
+    const t = document.getElementById('date-to').value;
+    if (f && t) {
+        dateFrom = f;
+        dateTo = t;
+        loadAll();
+    }
+}
+
+// Set initial range (1 month)
+(function initDates() {
+    const now = new Date();
+    const from = new Date(now);
+    from.setMonth(from.getMonth() - 1);
+    dateFrom = fmtDate(from);
+    dateTo = fmtDate(now);
+})();
+
+// ── Utils ──────────────────────────────────────────────────
+function apiParams(extra = {}) {
+    const p = { network: currentNetwork };
+    if (dateFrom) p.date_from = dateFrom;
+    if (dateTo) p.date_to = dateTo;
+    return { ...p, ...extra };
+}
+
+async function api(path, params = {}) {
+    const url = new URL(path, location.origin);
+    const allParams = apiParams(params);
+    Object.entries(allParams).forEach(([k, v]) => url.searchParams.set(k, v));
+    const r = await fetch(url);
+    return r.json();
+}
+
+function showSpinner(v) {
+    document.getElementById('spinner').classList.toggle('visible', v);
+}
+
+function destroyChart(key) {
+    if (charts[key]) { charts[key].destroy(); delete charts[key]; }
+}
+
+function updateSourceIndicator(source) {
+    const el = document.getElementById('data-source');
+    const dot = el.querySelector('.source-dot');
+    const label = el.querySelector('.source-label');
+    const map = {
+        live:  { text: 'Live', cls: 'source-live' },
+        cache: { text: 'Cache', cls: 'source-cache' },
+        csv:   { text: 'CSV (offline)', cls: 'source-csv' },
+    };
+    const info = map[source] || map.csv;
+    dot.className = 'source-dot ' + info.cls;
+    label.textContent = info.text;
+}
+
+// ── Export CSV ─────────────────────────────────────────────
+function exportCSV() {
+    const params = new URLSearchParams(apiParams());
+    window.open('/api/export_csv?' + params.toString(), '_blank');
+}
+
+// ── Force refresh (clear cache) ───────────────────────────
+async function forceRefresh() {
+    await fetch('/api/clear_cache', { method: 'POST' });
+    loadAll();
+}
+
+// ── KPI ────────────────────────────────────────────────────
+async function loadKPI() {
+    const data = await api('/api/summary');
+    if (data.error) return;
+
+    document.getElementById('kpi-total').textContent = data.total.toLocaleString();
+    document.getElementById('kpi-completed').textContent = data.completed.toLocaleString();
+    document.getElementById('kpi-failed').textContent = data.failed.toLocaleString();
+    document.getElementById('kpi-rate').textContent = data.success_rate + '%';
+    document.getElementById('kpi-apps').textContent = data.apps;
+    document.getElementById('kpi-requesters').textContent = data.requesters;
+    document.getElementById('kpi-datasets').textContent = data.datasets || 0;
+
+    updateSourceIndicator(data.source);
+
+    if (data.date_min && data.date_max) {
+        const dmin = data.date_min.substring(0, 10);
+        const dmax = data.date_max.substring(0, 10);
+        document.getElementById('period-info').textContent =
+            `Period: ${dmin} → ${dmax} | Source: ${data.source}`;
+    }
+}
+
+// ── Tasks per day chart ────────────────────────────────────
+async function loadDaily() {
+    const data = await api('/api/tasks_per_day');
+    destroyChart('daily');
+
+    const labels = data.map(d => d.day);
+    const ctx = document.getElementById('chart-daily').getContext('2d');
+
+    charts.daily = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Completed', data: data.map(d => d.COMPLETED || 0), backgroundColor: COLORS.COMPLETED, borderRadius: 4 },
+                { label: 'Failed',    data: data.map(d => d.FAILLED || 0),   backgroundColor: COLORS.FAILLED,   borderRadius: 4 },
+                { label: 'Other',     data: data.map(d => d.OTHER || 0),     backgroundColor: COLORS.OTHER,     borderRadius: 4 },
+            ],
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+                legend: { labels: { color: '#9B9BB0', font: { size: 11 } } },
+            },
+            scales: {
+                x: { stacked: true, ticks: { color: '#9B9BB0', maxRotation: 45 }, grid: { color: 'rgba(255,255,255,.05)' } },
+                y: { stacked: true, ticks: { color: '#9B9BB0' }, grid: { color: 'rgba(255,255,255,.08)' } },
+            },
+        },
+    });
+}
+
+// ── Apps breakdown chart ───────────────────────────────────
+async function loadAppsChart() {
+    const data = await api('/api/apps_breakdown');
+    destroyChart('apps');
+
+    const labels = data.map(d => d.app);
+    const ctx = document.getElementById('chart-apps').getContext('2d');
+
+    charts.apps = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Completed', data: data.map(d => d.COMPLETED || 0), backgroundColor: COLORS.COMPLETED, borderRadius: 3 },
+                { label: 'Failed',    data: data.map(d => d.FAILLED || 0),   backgroundColor: COLORS.FAILLED,   borderRadius: 3 },
+            ],
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#9B9BB0', font: { size: 11 } } } },
+            scales: {
+                x: { stacked: true, ticks: { color: '#9B9BB0' }, grid: { color: 'rgba(255,255,255,.08)' } },
+                y: { stacked: true, ticks: { color: '#9B9BB0', font: { size: 11 } }, grid: { display: false } },
+            },
+        },
+    });
+}
+
+// ── Status donut ───────────────────────────────────────────
+async function loadStatusChart() {
+    const data = await api('/api/summary');
+    if (data.error) return;
+    destroyChart('status');
+
+    const ctx = document.getElementById('chart-status').getContext('2d');
+    charts.status = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Completed', 'Failed', 'Other'],
+            datasets: [{
+                data: [data.completed, data.failed, data.other],
+                backgroundColor: [COLORS.COMPLETED, COLORS.FAILLED, COLORS.OTHER],
+                borderWidth: 0,
+                hoverOffset: 8,
+            }],
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            cutout: '60%',
+            plugins: {
+                legend: { position: 'bottom', labels: { color: '#9B9BB0', padding: 16, font: { size: 12 } } },
+            },
+        },
+    });
+}
+
+// ── Requesters table ───────────────────────────────────────
+async function loadRequesters() {
+    const data = await api('/api/requesters');
+    const tbody = document.getElementById('requesters-body');
+    tbody.innerHTML = '';
+    data.forEach(r => {
+        tbody.innerHTML += `<tr>
+            <td class="addr">${r.requester}</td>
+            <td>${r.total}</td>
+            <td><span class="badge completed">${r.COMPLETED}</span></td>
+            <td><span class="badge failed">${r.FAILLED || 0}</span></td>
+        </tr>`;
+    });
+}
+
+// ── Apps table ─────────────────────────────────────────────
+async function loadAppsTable() {
+    const data = await api('/api/apps_breakdown');
+    const tbody = document.getElementById('apps-body');
+    tbody.innerHTML = '';
+    data.forEach(a => {
+        const rate = a.total > 0 ? Math.round(a.COMPLETED / a.total * 100) : 0;
+        tbody.innerHTML += `<tr>
+            <td><strong>${a.app}</strong></td>
+            <td>${a.total}</td>
+            <td><span class="badge completed">${a.COMPLETED}</span></td>
+            <td><span class="badge failed">${a.FAILLED || 0}</span></td>
+            <td><strong>${rate}%</strong></td>
+        </tr>`;
+    });
+}
+
+// ── Load all ───────────────────────────────────────────────
+async function loadAll() {
+    showSpinner(true);
+    try {
+        await Promise.all([
+            loadKPI(),
+            loadDaily(),
+            loadAppsChart(),
+            loadStatusChart(),
+            loadRequesters(),
+            loadAppsTable(),
+        ]);
+    } finally {
+        showSpinner(false);
+    }
+}
+
+// ── Quick filter buttons ───────────────────────────────────
+document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const range = btn.dataset.range;
+        if (range !== 'custom') {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+        setDateRange(range);
+    });
+});
+
+// ── Network tab switching ──────────────────────────────────
+document.querySelectorAll('.network-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.network-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        currentNetwork = tab.dataset.network;
+        loadAll();
+    });
+});
+
+// ── Boot ───────────────────────────────────────────────────
+loadAll();
+</script>
+
+</body>
+</html>
+</script>
+
+</body>
+</html>
