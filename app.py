@@ -10,6 +10,7 @@ Architecture :
 
 import hashlib
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,9 +18,13 @@ from typing import Optional
 
 import httpx
 import pandas as pd
+from dotenv import load_dotenv
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+
+# Charger les variables d'environnement depuis .env
+load_dotenv()
 
 logger = logging.getLogger("tdx_dashboard")
 UTC = timezone.utc
@@ -30,12 +35,12 @@ ANALYSE_DIR = BASE_DIR.parent
 OUTPUT_DIR = ANALYSE_DIR / "deal_output"
 
 # ── Workerpools TDX ───────────────────────────────────────────
-WORKERPOOL_TDX_MAINNET = "0x8ef2ec3ef9535d4b4349bfec7d8b31a580e60244"
-WORKERPOOL_TDX_SEPOLIA = "0x2956f0cb779904795a5f30d3b3ea88b714c3123f"
+WORKERPOOL_TDX_MAINNET = os.getenv("WORKERPOOL_TDX_MAINNET", "0x8ef2ec3ef9535d4b4349bfec7d8b31a580e60244")
+WORKERPOOL_TDX_SEPOLIA = os.getenv("WORKERPOOL_TDX_SEPOLIA", "0x2956f0cb779904795a5f30d3b3ea88b714c3123f")
 
 # ── Endpoints GraphQL ──────────────────────────────────────────
-URL_ARB_MAINNET = "https://thegraph.arbitrum.iex.ec/api/subgraphs/id/B1comLe9SANBLrjdnoNTJSubbeC7cY7EoNu6zD82HeKy"
-URL_ARB_SEPOLIA = "https://thegraph.arbitrum-sepolia-testnet.iex.ec/api/subgraphs/id/2GCj8gzLCihsiEDq8cYvC5nUgK6VfwZ6hm3Wj8A3kcxz"
+URL_ARB_MAINNET = os.getenv("URL_ARB_MAINNET", "https://thegraph.arbitrum.iex.ec/api/subgraphs/id/B1comLe9SANBLrjdnoNTJSubbeC7cY7EoNu6zD82HeKy")
+URL_ARB_SEPOLIA = os.getenv("URL_ARB_SEPOLIA", "https://thegraph.arbitrum-sepolia-testnet.iex.ec/api/subgraphs/id/2GCj8gzLCihsiEDq8cYvC5nUgK6VfwZ6hm3Wj8A3kcxz")
 
 GRAPHQL_HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
@@ -92,7 +97,7 @@ DATASETS_QUERY = """
 """
 
 # ── Cache en mémoire ──────────────────────────────────────────
-CACHE_TTL = 300  # 5 minutes
+CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))  # 5 minutes par défaut
 _cache: dict[str, tuple[float, object]] = {}
 
 

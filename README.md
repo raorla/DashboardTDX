@@ -40,6 +40,27 @@ pip install -r requirements.txt
 
 Then open http://127.0.0.1:8050
 
+## Environment Variables
+
+Configuration is managed via environment variables. Create a `.env` file in the project root (copy from `.env.example`):
+
+```bash
+cp .env.example .env
+```
+
+### Available Variables
+
+| Variable                 | Default                                      | Purpose                               |
+| ------------------------ | -------------------------------------------- | ------------------------------------- |
+| `URL_ARB_MAINNET`        | Mainnet subgraph URL                         | GraphQL endpoint for Arbitrum Mainnet |
+| `URL_ARB_SEPOLIA`        | Sepolia subgraph URL                         | GraphQL endpoint for Arbitrum Sepolia |
+| `WORKERPOOL_TDX_MAINNET` | `0x8ef2ec3ef9535d4b4349bfec7d8b31a580e60244` | TDX workerpool address on Mainnet     |
+| `WORKERPOOL_TDX_SEPOLIA` | `0x2956f0cb779904795a5f30d3b3ea88b714c3123f` | TDX workerpool address on Sepolia     |
+| `CACHE_TTL`              | `300`                                        | Cache time-to-live in seconds         |
+| `DEBUG`                  | `False`                                      | Enable debug mode                     |
+
+**Note**: `.env` is in `.gitignore` and should NOT be committed. Each deployment environment (local, staging, production) has its own `.env` file.
+
 ## Deployment on Vercel
 
 ### Prerequisites
@@ -66,6 +87,19 @@ Vercel automatically detects:
 - Live URL will be provided (e.g., `https://yourproject.vercel.app`)
 - Dashboard runs in serverless mode (no persistent cache, no CSV fallback)
 - All data fetched from iExec subgraphs in real-time
+
+### Configure Environment Variables on Vercel
+
+1. Go to your project on [vercel.com](https://vercel.com)
+2. **Settings** → **Environment Variables**
+3. Add variables from `.env.example`:
+   - `URL_ARB_MAINNET`
+   - `URL_ARB_SEPOLIA`
+   - `WORKERPOOL_TDX_MAINNET`
+   - `WORKERPOOL_TDX_SEPOLIA`
+   - `CACHE_TTL` (optional, defaults to 300)
+
+4. **Redeploy** for changes to take effect
 
 ## Project Structure
 
