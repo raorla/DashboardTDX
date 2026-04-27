@@ -1,230 +1,96 @@
 # iExec TDX Dashboard
 
-Real-time analytics dashboard for iExec TDX (Trustless Data Exchange) workerpools on Arbitrum Mainnet and Sepolia.
+Real-time analytics dashboard for iExec TDX workerpools on Arbitrum Mainnet and Sepolia.
 
 ## Features
 
-- **Live Data**: Direct GraphQL queries to iExec subgraphs (no manual data refresh)
-- **Smart Caching**: 5-minute cache for performance optimization
-- **Multiple Time Ranges**: Today, 7 Days, 1 Month, 3 Months, 6 Months, or Custom date range
-- **Network Switching**: Toggle between Arbitrum Mainnet and Sepolia
-- **Rich Visualizations**:
-  - Tasks per day (stacked bar chart)
-  - Apps breakdown (horizontal bar)
-  - Status distribution (doughnut)
-  - Top requesters & apps tables
+- **Live Data**: Real-time GraphQL queries from iExec subgraphs
+- **Smart Caching**: 5-minute cache for performance
+- **Time Filtering**: Today, 7d, 1m, 3m, 6m, or custom date range
+- **Network Tabs**: Switch between Arbitrum Mainnet and Sepolia
+- **Visualizations**: Tasks per day, apps breakdown, status distribution
 - **Data Export**: Download filtered tasks as CSV
-- **Source Indicator**: Shows whether data is from Live (🟢 green), Cache (🟡 yellow), or CSV fallback (🔴 red)
+- **Source Indicator**: Shows data source (Live/Cache/CSV)
 
-## Local Setup
+## Quick Start
 
-### Requirements
-
-- Python 3.8+
-- pip
-
-### Installation
+### Local Setup
 
 ```bash
 cd tdx_dashboard
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### Running Locally
-
-```bash
+cp .env.example .env  # Customize if needed
 .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8050 --reload
 ```
 
-Then open http://127.0.0.1:8050
+Open http://127.0.0.1:8050
 
-## Environment Variables
+## Configuration
 
-Configuration is managed via environment variables. Create a `.env` file in the project root (copy from `.env.example`):
+Create a `.env` file (copy from `.env.example`):
 
-```bash
-cp .env.example .env
+```env
+URL_ARB_MAINNET=https://thegraph.arbitrum.iex.ec/api/subgraphs/id/...
+URL_ARB_SEPOLIA=https://thegraph.arbitrum-sepolia-testnet.iex.ec/api/subgraphs/id/...
+WORKERPOOL_TDX_MAINNET=0x8ef2ec3ef9535d4b4349bfec7d8b31a580e60244
+WORKERPOOL_TDX_SEPOLIA=0x2956f0cb779904795a5f30d3b3ea88b714c3123f
+CACHE_TTL=300
 ```
 
-### Available Variables
+**Note**: `.env` is in `.gitignore` — never commit it.
 
-| Variable                 | Default                                      | Purpose                               |
-| ------------------------ | -------------------------------------------- | ------------------------------------- |
-| `URL_ARB_MAINNET`        | Mainnet subgraph URL                         | GraphQL endpoint for Arbitrum Mainnet |
-| `URL_ARB_SEPOLIA`        | Sepolia subgraph URL                         | GraphQL endpoint for Arbitrum Sepolia |
-| `WORKERPOOL_TDX_MAINNET` | `0x8ef2ec3ef9535d4b4349bfec7d8b31a580e60244` | TDX workerpool address on Mainnet     |
-| `WORKERPOOL_TDX_SEPOLIA` | `0x2956f0cb779904795a5f30d3b3ea88b714c3123f` | TDX workerpool address on Sepolia     |
-| `CACHE_TTL`              | `300`                                        | Cache time-to-live in seconds         |
-| `DEBUG`                  | `False`                                      | Enable debug mode                     |
+## Deploy to Vercel
 
-**Note**: `.env` is in `.gitignore` and should NOT be committed. Each deployment environment (local, staging, production) has its own `.env` file.
-
-## Deployment on Vercel
-
-### Prerequisites
-
-- GitHub repo containing the code
-- Vercel account
-
-### Steps
-
-1. **Push to GitHub** (ensure `tdx_dashboard/` folder is in the repo)
-2. **Connect Vercel**:
-   - Go to [vercel.com](https://vercel.com)
-   - Import your repository
-   - Set **Root Directory** to `tdx_dashboard`
-   - Click Deploy
-
-Vercel automatically detects:
-
-- `vercel.json` (routing config)
-- `requirements.txt` (Python dependencies)
-
-### Post-Deployment
-
-- Live URL will be provided (e.g., `https://yourproject.vercel.app`)
-- Dashboard runs in serverless mode (no persistent cache, no CSV fallback)
-- All data fetched from iExec subgraphs in real-time
-
-### Configure Environment Variables on Vercel
-
-1. Go to your project on [vercel.com](https://vercel.com)
-2. **Settings** → **Environment Variables**
-3. Add variables from `.env.example`:
-   - `URL_ARB_MAINNET`
-   - `URL_ARB_SEPOLIA`
-   - `WORKERPOOL_TDX_MAINNET`
-   - `WORKERPOOL_TDX_SEPOLIA`
-   - `CACHE_TTL` (optional, defaults to 300)
-
-4. **Redeploy** for changes to take effect
+1. Push to GitHub
+2. Go to [vercel.com](https://vercel.com) → Import Repository
+3. Set **Root Directory** to `tdx_dashboard` → Deploy
+4. Add environment variables in **Settings → Environment Variables**
+5. Redeploy
 
 ## Project Structure
 
 ```
 tdx_dashboard/
-├── app.py                 # FastAPI backend (GraphQL queries, API endpoints)
-├── templates/
-│   └── index.html        # Frontend (HTML + Chart.js + JS)
-├── static/
-│   └── style.css         # iExec brand styling
-├── requirements.txt      # Python dependencies
-├── vercel.json          # Vercel routing config
-└── .venv/               # Python virtual environment (local only)
+├── app.py              # FastAPI backend
+├── templates/index.html # Frontend (HTML + Chart.js)
+├── static/style.css     # Styling
+├── requirements.txt     # Dependencies
+└── vercel.json         # Vercel config
 ```
 
 ## API Endpoints
 
-### GET `/api/summary`
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/summary` | Total, completed, failed, success rate |
+| `GET /api/tasks_per_day` | Tasks grouped by day |
+| `GET /api/apps_breakdown` | Task counts per app |
+| `GET /api/requesters` | Top requesters |
+| `GET /api/export_csv` | Download tasks as CSV |
+| `POST /api/clear_cache` | Force cache refresh |
 
-Global statistics (total, completed, failed, success rate, etc.)
-
-**Parameters:**
-
-- `network` (mainnet | sepolia) — default: mainnet
-- `date_from` (YYYY-MM-DD) — optional
-- `date_to` (YYYY-MM-DD) — optional
-
-**Response:**
-
-```json
-{
-  "source": "live",
-  "total": 108,
-  "completed": 87,
-  "failed": 21,
-  "success_rate": 80.6,
-  "apps": 9,
-  "requesters": 6,
-  "datasets": 65
-}
-```
-
-### GET `/api/tasks_per_day`
-
-Tasks grouped by day and status.
-
-### GET `/api/apps_breakdown`
-
-Task counts per app with status breakdown.
-
-### GET `/api/requesters`
-
-Top requesters with task stats.
-
-### GET `/api/export_csv`
-
-Download filtered tasks as CSV file.
-
-### GET `/api/cache_status`
-
-Inspect cache entries and TTL status.
-
-### POST `/api/clear_cache`
-
-Force refresh by clearing in-memory cache.
-
-## Data Source
-
-- **Subgraph URLs:**
-  - Arbitrum Mainnet: `https://thegraph.arbitrum.iex.ec/api/subgraphs/id/B1comLe9...`
-  - Arbitrum Sepolia: `https://thegraph.arbitrum-sepolia-testnet.iex.ec/api/subgraphs/id/2GCj8gzL...`
-
-- **Workerpools:**
-  - Mainnet TDX: `0x8ef2ec3ef9535d4b4349bfec7d8b31a580e60244`
-  - Sepolia TDX: `0x2956f0cb779904795a5f30d3b3ea88b714c3123f`
+All endpoints accept: `?network=mainnet|sepolia&date_from=YYYY-MM-DD&date_to=YYYY-MM-DD`
 
 ## Status Mapping
 
-- **COMPLETED**: Task successfully finished
+- **COMPLETED**: Task finished successfully
 - **FAILED**: Task failed, claimed but not finished, or in revealing phase
 - **OTHER**: Other statuses
 
-## Styling
-
-Uses iExec brand colors:
-
-- Yellow: `#FCD15A`
-- Dark: `#1D1D2C`
-- Success Green: `#4ADE80`
-- Fail Red: `#F87171`
-
-Dark mode by default with responsive layout.
-
-## Development
-
-### Modifying Endpoints
-
-Edit `app.py` — all endpoints are async and filter by workerpool + date range.
-
-### Modifying Frontend
-
-Edit `templates/index.html` (HTML + CSS + JavaScript together).
-
-### Styling
-
-Edit `static/style.css` (CSS variables at root).
-
 ## Troubleshooting
 
-### "Live" source but no data?
+**No data displayed?**
+- Check date range is valid
+- Verify network (mainnet vs sepolia)
+- Try clicking **Refresh** button to clear cache
 
-- Check network (mainnet vs sepolia)
-- Verify date range is correct (date_to must be ≥ date_from)
-- Subgraph might be temporarily down → fallback to cache
-
-### Cache not clearing?
-
-- Click **"↻ Refresh"** button (calls `/api/clear_cache`)
-- Or manually: `curl -X POST http://127.0.0.1:8050/api/clear_cache`
-
-### Dates off by one day?
-
-- Dashboard uses local timezone for date calculations
+**Dates off by one day?**
+- Dashboard uses local browser timezone
 - Subgraph timestamps are UTC
 
 ## License
 
 Part of iExec Platform Analysis tools.
+
