@@ -72,6 +72,7 @@ TASKS_QUERY = """{
         dataset{ name id }
         workerpool{ id }
         tag
+        timestamp
       }
       status,
     }
@@ -88,6 +89,21 @@ CLAIMS_QUERY = """{
       id
       deal { workerpool { id } }
     }
+  }
+}"""
+
+DEALS_QUERY = """{
+  deals(first:500, skip:SKIP_PARAM,
+        where: { workerpool: "WP_PARAM", timestamp_gte: BEGIN_PARAM, timestamp_lte: END_PARAM },
+        orderBy: timestamp, orderDirection: desc) {
+    id
+    timestamp
+    botSize
+    tag
+    app { name multiaddr }
+    dataset { id name }
+    requester { id }
+    tasks { id }
   }
 }"""
 
@@ -202,24 +218,28 @@ async def _fetch_tasks_subgraph(
             detected = True
 
             for e in items:
-                ts = int(e.get("timestamp", 0))
-                if not (begin_ts <= ts <= end_ts):
-                    continue
-                wp_id = e["task"]["deal"]["workerpool"]["id"]
+                deal = e["task"]["deal"]
+                wp_id = deal["workerpool"]["id"]
                 if wp_id != workerpool:
+                    continue
+                # On utilise deal.timestamp (quand l'order a été matché on-chain)
+                # plutôt que init.timestamp : robuste face aux phantom tasks
+                # (claim() qui auto-initialise un deal jamais touché)
+                deal_ts = int(deal.get("timestamp") or e.get("timestamp", 0))
+                if not (begin_ts <= deal_ts <= end_ts):
                     continue
                 init_tx = ((e.get("transaction") or {}).get("id") or "").lower()
                 total_data.append([
                     e["task"]["id"],
-                    e["task"]["deal"]["app"]["name"],
-                    hex_to_string(e["task"]["deal"]["app"]["multiaddr"]),
-                    e["task"]["deal"]["tag"],
+                    deal["app"]["name"],
+                    hex_to_string(deal["app"]["multiaddr"]),
+                    deal["tag"],
                     e["task"]["status"],
-                    ts,
+                    deal_ts,
                     wp_id,
-                    e["task"]["deal"]["requester"]["id"],
-                    (e["task"]["deal"].get("dataset") or {}).get("name"),
-                    (e["task"]["deal"].get("dataset") or {}).get("id"),
+                    deal["requester"]["id"],
+                    (deal.get("dataset") or {}).get("name"),
+                    (deal.get("dataset") or {}).get("id"),
                     init_tx,
                 ])
             skip += page_size
@@ -286,6 +306,70 @@ async def _fetch_claims_info(
         if len(tids) >= 2:
             batch_ids.update(tids)
     return batch_ids, claim_tx_by_task
+
+
+# ── Fetch GraphQL — Missing tasks from deals ──────────────────
+async def _fetch_missing_from_deals(
+    url: str, workerpool: str, date_begin: datetime, date_end: datetime,
+) -> pd.DataFrame:
+    """Pour chaque deal du workerpool dans la période, renvoie les tasks manquantes
+    (botSize - len(tasks)) avec un statut CLAIMED et la date du deal.
+    Ces 'missing tasks' sont des deals matchés on-chain mais jamais initialisés —
+    failures de service que l'utilisateur peut récupérer via claim()."""
+    begin_ts = int(date_begin.timestamp())
+    end_ts = int(date_end.timestamp())
+    rows = []
+    skip = 0
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        while skip < 20_000:
+            query = (DEALS_QUERY
+                     .replace("SKIP_PARAM", str(skip))
+                     .replace("WP_PARAM", workerpool.lower())
+                     .replace("BEGIN_PARAM", str(begin_ts))
+                     .replace("END_PARAM", str(end_ts)))
+            try:
+                r = await client.post(url, headers=GRAPHQL_HEADERS, json={"query": query})
+                r.raise_for_status()
+                items = (r.json().get("data") or {}).get("deals") or []
+            except Exception as e:
+                logger.warning("Subgraph deals error skip=%d: %s", skip, e)
+                break
+            if not items:
+                break
+            for d in items:
+                bot_size = int(d.get("botSize") or 0)
+                ntasks = len(d.get("tasks") or [])
+                missing = bot_size - ntasks
+                if missing <= 0:
+                    continue
+                deal_ts = int(d["timestamp"])
+                for i in range(missing):
+                    rows.append([
+                        f"missing_{d['id']}_{i}",
+                        d["app"]["name"],
+                        hex_to_string(d["app"]["multiaddr"]),
+                        d.get("tag"),
+                        "CLAIMED",
+                        deal_ts,
+                        workerpool,
+                        d["requester"]["id"],
+                        (d.get("dataset") or {}).get("name"),
+                        (d.get("dataset") or {}).get("id"),
+                        "",
+                    ])
+            skip += 500
+
+    columns = [
+        "TASK_ID", "APP NAME", "APP MULTIADDR", "TAG", "STATUS",
+        "DATE", "WORKERPOOL ID", "REQUESTER ID", "DATASET_NAME", "DATASET_ID",
+        "INIT_TX",
+    ]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    df = pd.DataFrame(rows, columns=columns)
+    df["DATE"] = df["DATE"].astype(int).apply(lambda x: datetime.fromtimestamp(x, UTC))
+    return df
 
 
 # ── Fetch GraphQL — Datasets ──────────────────────────────────
@@ -409,24 +493,20 @@ async def get_tasks(network: str, date_from: str, date_to: str) -> tuple[pd.Data
     try:
         df = await _fetch_tasks_subgraph(net["url"], net["workerpool"], d_begin, d_end)
         df = _remap_status(df)
+        # Subdivise les FAILLED : batch-claims (multicall) → CLAIMED, solo → FAILLED.
+        # On garde tout, la date d'affichage est deal.timestamp (cf. _fetch_tasks_subgraph).
         if not df.empty and "TASK_ID" in df.columns:
-            batch_claimed, claim_tx_by_task = await _fetch_claims_info(
+            batch_claimed, _ = await _fetch_claims_info(
                 net["url"], net["workerpool"], d_begin,
             )
-            # Exclut les phantom tasks : init.tx == claim.tx = task jamais run,
-            # juste créé atomiquement par un claim() sur un dealid vierge
-            if claim_tx_by_task and "INIT_TX" in df.columns:
-                phantom_mask = df.apply(
-                    lambda r: claim_tx_by_task.get(r["TASK_ID"]) == r["INIT_TX"]
-                    and r["INIT_TX"] != "",
-                    axis=1,
-                )
-                if phantom_mask.any():
-                    df = df[~phantom_mask].copy()
-            # Subdivise les FAILLED restants : batch-claims → CLAIMED, solo → FAILLED
             if batch_claimed:
                 mask = df["TASK_ID"].isin(batch_claimed) & (df["STATUS"] == "FAILLED")
                 df.loc[mask, "STATUS"] = "CLAIMED"
+        # Ajoute les "missing tasks" : deals matchés mais jamais initialisés on-chain
+        # (botSize > len(tasks)). Comptés comme CLAIMED, attribués à la date du deal.
+        df_missing = await _fetch_missing_from_deals(net["url"], net["workerpool"], d_begin, d_end)
+        if not df_missing.empty:
+            df = pd.concat([df, df_missing], ignore_index=True) if not df.empty else df_missing
         _cache_set(key, df)
         return df, "live"
     except Exception as e:
