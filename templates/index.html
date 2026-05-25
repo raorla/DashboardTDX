@@ -98,6 +98,7 @@
                         <th>Total</th>
                         <th>Completed</th>
                         <th>Failed</th>
+                        <th>Claimed</th>
                     </tr>
                 </thead>
                 <tbody id="requesters-body"></tbody>
@@ -116,6 +117,7 @@
                         <th>Total</th>
                         <th>Completed</th>
                         <th>Failed</th>
+                        <th>Claimed</th>
                         <th>Success Rate</th>
                     </tr>
                 </thead>
@@ -136,7 +138,7 @@ const charts = {};
 const COLORS = {
     COMPLETED: '#4ADE80',
     FAILLED:   '#F87171',
-    OTHER:     '#A78BFA',
+    CLAIMED:   '#60A5FA',
 };
 
 // ── Date helpers ───────────────────────────────────────────
@@ -249,7 +251,7 @@ async function loadKPI() {
 
     document.getElementById('kpi-total').textContent = data.total.toLocaleString();
     document.getElementById('kpi-completed').textContent = data.completed.toLocaleString();
-    document.getElementById('kpi-failed').textContent = data.failed.toLocaleString();
+    document.getElementById('kpi-failed').textContent = (data.failed + (data.claimed || 0)).toLocaleString();
     document.getElementById('kpi-rate').textContent = data.success_rate + '%';
     document.getElementById('kpi-apps').textContent = data.apps;
     document.getElementById('kpi-requesters').textContent = data.requesters;
@@ -280,7 +282,7 @@ async function loadDaily() {
             datasets: [
                 { label: 'Completed', data: data.map(d => d.COMPLETED || 0), backgroundColor: COLORS.COMPLETED, borderRadius: 4 },
                 { label: 'Failed',    data: data.map(d => d.FAILLED || 0),   backgroundColor: COLORS.FAILLED,   borderRadius: 4 },
-                { label: 'Other',     data: data.map(d => d.OTHER || 0),     backgroundColor: COLORS.OTHER,     borderRadius: 4 },
+                { label: 'Claimed',   data: data.map(d => d.CLAIMED || 0),   backgroundColor: COLORS.CLAIMED,   borderRadius: 4, hidden: true },
             ],
         },
         options: {
@@ -311,6 +313,7 @@ async function loadAppsChart() {
             datasets: [
                 { label: 'Completed', data: data.map(d => d.COMPLETED || 0), backgroundColor: COLORS.COMPLETED, borderRadius: 3 },
                 { label: 'Failed',    data: data.map(d => d.FAILLED || 0),   backgroundColor: COLORS.FAILLED,   borderRadius: 3 },
+                { label: 'Claimed',   data: data.map(d => d.CLAIMED || 0),   backgroundColor: COLORS.CLAIMED,   borderRadius: 3, hidden: true },
             ],
         },
         options: {
@@ -335,10 +338,10 @@ async function loadStatusChart() {
     charts.status = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Completed', 'Failed', 'Other'],
+            labels: ['Completed', 'Failed', 'Claimed'],
             datasets: [{
-                data: [data.completed, data.failed, data.other],
-                backgroundColor: [COLORS.COMPLETED, COLORS.FAILLED, COLORS.OTHER],
+                data: [data.completed, data.failed, data.claimed || 0],
+                backgroundColor: [COLORS.COMPLETED, COLORS.FAILLED, COLORS.CLAIMED],
                 borderWidth: 0,
                 hoverOffset: 8,
             }],
@@ -351,6 +354,9 @@ async function loadStatusChart() {
             },
         },
     });
+    // Claimed masqué par défaut (clic sur la légende pour l'afficher)
+    charts.status.toggleDataVisibility(2);
+    charts.status.update();
 }
 
 // ── Requesters table ───────────────────────────────────────
@@ -364,6 +370,7 @@ async function loadRequesters() {
             <td>${r.total}</td>
             <td><span class="badge completed">${r.COMPLETED}</span></td>
             <td><span class="badge failed">${r.FAILLED || 0}</span></td>
+            <td><span class="badge claimed">${r.CLAIMED || 0}</span></td>
         </tr>`;
     });
 }
@@ -380,6 +387,7 @@ async function loadAppsTable() {
             <td>${a.total}</td>
             <td><span class="badge completed">${a.COMPLETED}</span></td>
             <td><span class="badge failed">${a.FAILLED || 0}</span></td>
+            <td><span class="badge claimed">${a.CLAIMED || 0}</span></td>
             <td><strong>${rate}%</strong></td>
         </tr>`;
     });

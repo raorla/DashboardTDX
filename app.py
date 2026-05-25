@@ -79,6 +79,17 @@ TASKS_QUERY = """{
   }
 }"""
 
+CLAIMS_QUERY = """{
+  taskClaimeds(first:500, skip: SKIP_PARAM, orderBy: timestamp, orderDirection: desc){
+    timestamp
+    transaction { id }
+    task {
+      id
+      deal { workerpool { id } }
+    }
+  }
+}"""
+
 DATASETS_QUERY = """
 {
   datasets(first:FIRST_PARAM, skip:SKIP_PARAM,
@@ -221,6 +232,53 @@ async def _fetch_tasks_subgraph(
     return df
 
 
+# ── Fetch GraphQL — Batch claims (multicall) ───────────────────
+async def _fetch_batch_claimed_ids(
+    url: str, workerpool: str, date_begin: datetime,
+) -> set[str]:
+    """Renvoie les task_id claim()-és dans une transaction multicall (≥2 claims/tx).
+    Sur iExec FAILLED == claim(); on subdivise: solo (1 claim/tx) = expiration
+    naturelle (FAILED), batch (≥2 claims/tx) = cleanup utilisateur (CLAIMED)."""
+    begin_ts = int(date_begin.timestamp())
+    by_tx: dict[str, list[str]] = {}
+    skip = 0
+    page_size = 500
+    max_skip = 50_000
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        while skip < max_skip:
+            query = CLAIMS_QUERY.replace("SKIP_PARAM", str(skip))
+            try:
+                r = await client.post(url, headers=GRAPHQL_HEADERS, json={"query": query})
+                r.raise_for_status()
+                items = (r.json().get("data") or {}).get("taskClaimeds") or []
+            except Exception as e:
+                logger.warning("Subgraph claims error skip=%d: %s", skip, e)
+                break
+            if not items:
+                break
+            ts_list = [int(e.get("timestamp", 0)) for e in items]
+            if max(ts_list) < begin_ts:
+                break
+            for e in items:
+                if int(e.get("timestamp", 0)) < begin_ts:
+                    continue
+                deal = e["task"]["deal"]
+                if deal["workerpool"]["id"].lower() != workerpool.lower():
+                    continue
+                tx_id = (e.get("transaction") or {}).get("id", "")
+                if not tx_id:
+                    continue
+                by_tx.setdefault(tx_id, []).append(e["task"]["id"])
+            skip += page_size
+
+    batch_ids: set[str] = set()
+    for tids in by_tx.values():
+        if len(tids) >= 2:
+            batch_ids.update(tids)
+    return batch_ids
+
+
 # ── Fetch GraphQL — Datasets ──────────────────────────────────
 async def _fetch_datasets_subgraph(
     url: str, date_begin: datetime, date_end: datetime,
@@ -316,12 +374,11 @@ def _load_csv_datasets(network: str) -> pd.DataFrame:
 
 # ── Remap statuts ──────────────────────────────────────────────
 def _remap_status(df: pd.DataFrame) -> pd.DataFrame:
-    """ACTIVE et REVEALING (claimed mais jamais terminé) → FAILLED."""
+    """Garde uniquement les tâches terminées : COMPLETED et FAILLED.
+    Exclut ACTIVE/REVEALING (in-flight, pas encore terminées)."""
     if df.empty or "STATUS" not in df.columns:
         return df
-    df = df.copy()
-    df["STATUS"] = df["STATUS"].replace({"ACTIVE": "FAILLED", "REVEALING": "FAILLED"})
-    return df
+    return df[df["STATUS"].isin(["COMPLETED", "FAILLED"])].copy()
 
 
 # ── Données (cache → subgraph → CSV fallback) ─────────────────
@@ -343,6 +400,12 @@ async def get_tasks(network: str, date_from: str, date_to: str) -> tuple[pd.Data
     try:
         df = await _fetch_tasks_subgraph(net["url"], net["workerpool"], d_begin, d_end)
         df = _remap_status(df)
+        # Subdivise les FAILLED : batch-claims (multicall) → CLAIMED, solo → FAILLED
+        if not df.empty and "TASK_ID" in df.columns:
+            batch_claimed = await _fetch_batch_claimed_ids(net["url"], net["workerpool"], d_begin)
+            if batch_claimed:
+                mask = df["TASK_ID"].isin(batch_claimed) & (df["STATUS"] == "FAILLED")
+                df.loc[mask, "STATUS"] = "CLAIMED"
         _cache_set(key, df)
         return df, "live"
     except Exception as e:
@@ -402,7 +465,7 @@ async def summary(
     if df.empty:
         return {
             "source": source,
-            "total": 0, "completed": 0, "failed": 0, "active": 0, "other": 0,
+            "total": 0, "completed": 0, "failed": 0, "claimed": 0,
             "success_rate": 0, "apps": 0, "requesters": 0, "datasets": 0,
             "date_min": None, "date_max": None,
         }
@@ -410,7 +473,8 @@ async def summary(
     total = len(df)
     completed = int((df["STATUS"] == "COMPLETED").sum())
     failed = int((df["STATUS"] == "FAILLED").sum())
-    other = total - completed - failed
+    claimed = int((df["STATUS"] == "CLAIMED").sum())
+    # Success rate sur l'ensemble : claimed = anciennes failed au sens iExec, donc incluses
     datasets = int(ds_df["DATASET_ID"].nunique()) if not ds_df.empty and "DATASET_ID" in ds_df.columns else 0
 
     return {
@@ -418,7 +482,7 @@ async def summary(
         "total": total,
         "completed": completed,
         "failed": failed,
-        "other": other,
+        "claimed": claimed,
         "success_rate": round(completed / total * 100, 1) if total else 0,
         "apps": int(df["APP NAME"].nunique()),
         "requesters": int(df["REQUESTER ID"].nunique()),
@@ -446,12 +510,10 @@ async def tasks_per_day(
     for _, row in grouped.iterrows():
         day = row["DAY"]
         if day not in result:
-            result[day] = {"day": day, "COMPLETED": 0, "FAILLED": 0, "OTHER": 0}
+            result[day] = {"day": day, "COMPLETED": 0, "FAILLED": 0, "CLAIMED": 0}
         status = row["STATUS"]
         if status in result[day]:
             result[day][status] = int(row["count"])
-        else:
-            result[day]["OTHER"] = result[day].get("OTHER", 0) + int(row["count"])
 
     return sorted(result.values(), key=lambda x: x["day"])
 
@@ -471,7 +533,7 @@ async def apps_breakdown(
     for _, row in grouped.iterrows():
         app_name = row["APP NAME"]
         if app_name not in apps:
-            apps[app_name] = {"app": app_name, "COMPLETED": 0, "FAILLED": 0, "total": 0}
+            apps[app_name] = {"app": app_name, "COMPLETED": 0, "FAILLED": 0, "CLAIMED": 0, "total": 0}
         status = row["STATUS"]
         count = int(row["count"])
         if status in apps[app_name]:
@@ -496,7 +558,7 @@ async def requesters(
     for _, row in grouped.iterrows():
         rid = row["REQUESTER ID"]
         if rid not in reqs:
-            reqs[rid] = {"requester": rid, "COMPLETED": 0, "FAILLED": 0, "total": 0}
+            reqs[rid] = {"requester": rid, "COMPLETED": 0, "FAILLED": 0, "CLAIMED": 0, "total": 0}
         status = row["STATUS"]
         count = int(row["count"])
         if status in reqs[rid]:

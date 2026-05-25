@@ -62,14 +62,14 @@ tdx_dashboard/
 
 ## API Endpoints
 
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /api/summary` | Total, completed, failed, success rate |
-| `GET /api/tasks_per_day` | Tasks grouped by day |
-| `GET /api/apps_breakdown` | Task counts per app |
-| `GET /api/requesters` | Top requesters |
-| `GET /api/export_csv` | Download tasks as CSV |
-| `POST /api/clear_cache` | Force cache refresh |
+| Endpoint                  | Purpose                                |
+| ------------------------- | -------------------------------------- |
+| `GET /api/summary`        | Total, completed, failed, success rate |
+| `GET /api/tasks_per_day`  | Tasks grouped by day                   |
+| `GET /api/apps_breakdown` | Task counts per app                    |
+| `GET /api/requesters`     | Top requesters                         |
+| `GET /api/export_csv`     | Download tasks as CSV                  |
+| `POST /api/clear_cache`   | Force cache refresh                    |
 
 All endpoints accept: `?network=mainnet|sepolia&date_from=YYYY-MM-DD&date_to=YYYY-MM-DD`
 
@@ -82,15 +82,16 @@ All endpoints accept: `?network=mainnet|sepolia&date_from=YYYY-MM-DD&date_to=YYY
 ## Troubleshooting
 
 **No data displayed?**
+
 - Check date range is valid
 - Verify network (mainnet vs sepolia)
 - Try clicking **Refresh** button to clear cache
 
 **Dates off by one day?**
+
 - Dashboard uses local browser timezone
 - Subgraph timestamps are UTC
 
 ## License
 
 Part of iExec Platform Analysis tools.
-
