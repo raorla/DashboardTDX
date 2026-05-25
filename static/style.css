@@ -277,7 +277,7 @@ body {
 .kpi-value.success   { color: var(--iexec-success); }
 .kpi-value.fail      { color: var(--iexec-fail); }
 .kpi-value.active    { color: var(--iexec-active); }
-.kpi-value.claimed   { color: var(--iexec-active); }
+.kpi-value.claimed   { color: var(--iexec-fail); }
 .kpi-value.yellow    { color: var(--iexec-yellow); }
 
 /* ── Chart panels ────────────────────────────────────────── */
@@ -370,7 +370,7 @@ tr:hover td {
 .badge.completed  { background: rgba(74,222,128,.15); color: var(--iexec-success); }
 .badge.failed     { background: rgba(248,113,113,.15); color: var(--iexec-fail); }
 .badge.active     { background: rgba(96,165,250,.15); color: var(--iexec-active); }
-.badge.claimed    { background: rgba(96,165,250,.15); color: var(--iexec-active); }
+.badge.claimed    { background: rgba(248,113,113,.15); color: var(--iexec-fail); }
 
 /* ── Period info ─────────────────────────────────────────── */
 

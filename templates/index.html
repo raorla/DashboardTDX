@@ -138,7 +138,7 @@ const charts = {};
 const COLORS = {
     COMPLETED: '#4ADE80',
     FAILLED:   '#F87171',
-    CLAIMED:   '#60A5FA',
+    CLAIMED:   '#F87171',
 };
 
 // ── Date helpers ───────────────────────────────────────────
@@ -280,9 +280,8 @@ async function loadDaily() {
         data: {
             labels,
             datasets: [
-                { label: 'Completed', data: data.map(d => d.COMPLETED || 0), backgroundColor: COLORS.COMPLETED, borderRadius: 4 },
-                { label: 'Failed',    data: data.map(d => d.FAILLED || 0),   backgroundColor: COLORS.FAILLED,   borderRadius: 4 },
-                { label: 'Claimed',   data: data.map(d => d.CLAIMED || 0),   backgroundColor: COLORS.CLAIMED,   borderRadius: 4, hidden: true },
+                { label: 'Completed', data: data.map(d => d.COMPLETED || 0),                       backgroundColor: COLORS.COMPLETED, borderRadius: 4 },
+                { label: 'Failed',    data: data.map(d => (d.FAILLED || 0) + (d.CLAIMED || 0)),    backgroundColor: COLORS.FAILLED,   borderRadius: 4 },
             ],
         },
         options: {
@@ -311,9 +310,8 @@ async function loadAppsChart() {
         data: {
             labels,
             datasets: [
-                { label: 'Completed', data: data.map(d => d.COMPLETED || 0), backgroundColor: COLORS.COMPLETED, borderRadius: 3 },
-                { label: 'Failed',    data: data.map(d => d.FAILLED || 0),   backgroundColor: COLORS.FAILLED,   borderRadius: 3 },
-                { label: 'Claimed',   data: data.map(d => d.CLAIMED || 0),   backgroundColor: COLORS.CLAIMED,   borderRadius: 3, hidden: true },
+                { label: 'Completed', data: data.map(d => d.COMPLETED || 0),                       backgroundColor: COLORS.COMPLETED, borderRadius: 3 },
+                { label: 'Failed',    data: data.map(d => (d.FAILLED || 0) + (d.CLAIMED || 0)),    backgroundColor: COLORS.FAILLED,   borderRadius: 3 },
             ],
         },
         options: {
@@ -338,10 +336,10 @@ async function loadStatusChart() {
     charts.status = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Completed', 'Failed', 'Claimed'],
+            labels: ['Completed', 'Failed'],
             datasets: [{
-                data: [data.completed, data.failed, data.claimed || 0],
-                backgroundColor: [COLORS.COMPLETED, COLORS.FAILLED, COLORS.CLAIMED],
+                data: [data.completed, data.failed + (data.claimed || 0)],
+                backgroundColor: [COLORS.COMPLETED, COLORS.FAILLED],
                 borderWidth: 0,
                 hoverOffset: 8,
             }],
@@ -354,9 +352,6 @@ async function loadStatusChart() {
             },
         },
     });
-    // Claimed masqué par défaut (clic sur la légende pour l'afficher)
-    charts.status.toggleDataVisibility(2);
-    charts.status.update();
 }
 
 // ── Requesters table ───────────────────────────────────────

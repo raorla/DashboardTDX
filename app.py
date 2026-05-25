@@ -76,6 +76,7 @@ TASKS_QUERY = """{
       status,
     }
     timestamp
+    transaction { id }
   }
 }"""
 
@@ -207,6 +208,7 @@ async def _fetch_tasks_subgraph(
                 wp_id = e["task"]["deal"]["workerpool"]["id"]
                 if wp_id != workerpool:
                     continue
+                init_tx = ((e.get("transaction") or {}).get("id") or "").lower()
                 total_data.append([
                     e["task"]["id"],
                     e["task"]["deal"]["app"]["name"],
@@ -218,12 +220,14 @@ async def _fetch_tasks_subgraph(
                     e["task"]["deal"]["requester"]["id"],
                     (e["task"]["deal"].get("dataset") or {}).get("name"),
                     (e["task"]["deal"].get("dataset") or {}).get("id"),
+                    init_tx,
                 ])
             skip += page_size
 
     columns = [
         "TASK_ID", "APP NAME", "APP MULTIADDR", "TAG", "STATUS",
         "DATE", "WORKERPOOL ID", "REQUESTER ID", "DATASET_NAME", "DATASET_ID",
+        "INIT_TX",
     ]
     if not total_data:
         return pd.DataFrame(columns=columns)
@@ -232,15 +236,18 @@ async def _fetch_tasks_subgraph(
     return df
 
 
-# ── Fetch GraphQL — Batch claims (multicall) ───────────────────
-async def _fetch_batch_claimed_ids(
+# ── Fetch GraphQL — Claims (batch detection + claim tx map) ───
+async def _fetch_claims_info(
     url: str, workerpool: str, date_begin: datetime,
-) -> set[str]:
-    """Renvoie les task_id claim()-és dans une transaction multicall (≥2 claims/tx).
-    Sur iExec FAILLED == claim(); on subdivise: solo (1 claim/tx) = expiration
-    naturelle (FAILED), batch (≥2 claims/tx) = cleanup utilisateur (CLAIMED)."""
+) -> tuple[set[str], dict[str, str]]:
+    """Renvoie:
+      - batch_ids : task_id claim()-és dans une tx multicall (≥2 claims/tx) → CLAIMED
+      - claim_tx_by_task : mapping task_id → tx_id du claim, pour détecter les
+        'phantom tasks' (init.tx == claim.tx = task jamais run, juste claim-init
+        atomique sur un dealid jamais utilisé)."""
     begin_ts = int(date_begin.timestamp())
     by_tx: dict[str, list[str]] = {}
+    claim_tx_by_task: dict[str, str] = {}
     skip = 0
     page_size = 500
     max_skip = 50_000
@@ -266,17 +273,19 @@ async def _fetch_batch_claimed_ids(
                 deal = e["task"]["deal"]
                 if deal["workerpool"]["id"].lower() != workerpool.lower():
                     continue
-                tx_id = (e.get("transaction") or {}).get("id", "")
+                tx_id = ((e.get("transaction") or {}).get("id") or "").lower()
                 if not tx_id:
                     continue
-                by_tx.setdefault(tx_id, []).append(e["task"]["id"])
+                tid = e["task"]["id"]
+                by_tx.setdefault(tx_id, []).append(tid)
+                claim_tx_by_task[tid] = tx_id
             skip += page_size
 
     batch_ids: set[str] = set()
     for tids in by_tx.values():
         if len(tids) >= 2:
             batch_ids.update(tids)
-    return batch_ids
+    return batch_ids, claim_tx_by_task
 
 
 # ── Fetch GraphQL — Datasets ──────────────────────────────────
@@ -400,9 +409,21 @@ async def get_tasks(network: str, date_from: str, date_to: str) -> tuple[pd.Data
     try:
         df = await _fetch_tasks_subgraph(net["url"], net["workerpool"], d_begin, d_end)
         df = _remap_status(df)
-        # Subdivise les FAILLED : batch-claims (multicall) → CLAIMED, solo → FAILLED
         if not df.empty and "TASK_ID" in df.columns:
-            batch_claimed = await _fetch_batch_claimed_ids(net["url"], net["workerpool"], d_begin)
+            batch_claimed, claim_tx_by_task = await _fetch_claims_info(
+                net["url"], net["workerpool"], d_begin,
+            )
+            # Exclut les phantom tasks : init.tx == claim.tx = task jamais run,
+            # juste créé atomiquement par un claim() sur un dealid vierge
+            if claim_tx_by_task and "INIT_TX" in df.columns:
+                phantom_mask = df.apply(
+                    lambda r: claim_tx_by_task.get(r["TASK_ID"]) == r["INIT_TX"]
+                    and r["INIT_TX"] != "",
+                    axis=1,
+                )
+                if phantom_mask.any():
+                    df = df[~phantom_mask].copy()
+            # Subdivise les FAILLED restants : batch-claims → CLAIMED, solo → FAILLED
             if batch_claimed:
                 mask = df["TASK_ID"].isin(batch_claimed) & (df["STATUS"] == "FAILLED")
                 df.loc[mask, "STATUS"] = "CLAIMED"
