@@ -75,6 +75,7 @@ TASKS_QUERY = """{
         timestamp
       }
       status,
+      finalDeadline
     }
     timestamp
     transaction { id }
@@ -229,6 +230,7 @@ async def _fetch_tasks_subgraph(
                 if not (begin_ts <= deal_ts <= end_ts):
                     continue
                 init_tx = ((e.get("transaction") or {}).get("id") or "").lower()
+                final_deadline = int(e["task"].get("finalDeadline") or 0)
                 total_data.append([
                     e["task"]["id"],
                     deal["app"]["name"],
@@ -241,13 +243,14 @@ async def _fetch_tasks_subgraph(
                     (deal.get("dataset") or {}).get("name"),
                     (deal.get("dataset") or {}).get("id"),
                     init_tx,
+                    final_deadline,
                 ])
             skip += page_size
 
     columns = [
         "TASK_ID", "APP NAME", "APP MULTIADDR", "TAG", "STATUS",
         "DATE", "WORKERPOOL ID", "REQUESTER ID", "DATASET_NAME", "DATASET_ID",
-        "INIT_TX",
+        "INIT_TX", "FINAL_DEADLINE",
     ]
     if not total_data:
         return pd.DataFrame(columns=columns)
@@ -357,13 +360,14 @@ async def _fetch_missing_from_deals(
                         (d.get("dataset") or {}).get("name"),
                         (d.get("dataset") or {}).get("id"),
                         "",
+                        0,
                     ])
             skip += 500
 
     columns = [
         "TASK_ID", "APP NAME", "APP MULTIADDR", "TAG", "STATUS",
         "DATE", "WORKERPOOL ID", "REQUESTER ID", "DATASET_NAME", "DATASET_ID",
-        "INIT_TX",
+        "INIT_TX", "FINAL_DEADLINE",
     ]
     if not rows:
         return pd.DataFrame(columns=columns)
@@ -467,10 +471,24 @@ def _load_csv_datasets(network: str) -> pd.DataFrame:
 
 # ── Remap statuts ──────────────────────────────────────────────
 def _remap_status(df: pd.DataFrame) -> pd.DataFrame:
-    """Garde uniquement les tâches terminées : COMPLETED et FAILLED.
-    Exclut ACTIVE/REVEALING (in-flight, pas encore terminées)."""
+    """Garde les tâches terminées : COMPLETED et FAILLED.
+
+    Une tâche ACTIVE/REVEALING dont le finalDeadline est dépassé ne peut plus
+    jamais être finalisée → c'est un échec réel (elle deviendra FAILLED au prochain
+    claim()). On la promeut donc en FAILLED tout de suite. Les ACTIVE/REVEALING
+    encore dans les temps sont de vraies tâches en cours → exclues (non terminées)."""
     if df.empty or "STATUS" not in df.columns:
         return df
+    df = df.copy()
+    if "FINAL_DEADLINE" in df.columns:
+        now_ts = int(datetime.now(UTC).timestamp())
+        deadline = pd.to_numeric(df["FINAL_DEADLINE"], errors="coerce").fillna(0).astype("int64")
+        expired = (
+            df["STATUS"].isin(["ACTIVE", "REVEALING"])
+            & (deadline > 0)
+            & (deadline < now_ts)
+        )
+        df.loc[expired, "STATUS"] = "FAILLED"
     return df[df["STATUS"].isin(["COMPLETED", "FAILLED"])].copy()
 
 
